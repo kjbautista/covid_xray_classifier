@@ -21,9 +21,15 @@ from torchvision import transforms
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-import cv2
+
 import os
+
 from imutils import build_montages
+import cv2
+
+from sklearn.metrics import confusion_matrix
+import seaborn as sn
+import pandas as pd
 
 # Set up CUDA
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -82,9 +88,9 @@ save_lab = '-net1'
 # In[3]:
 
 
-##### -- change to path to files !!!!! ######
+##### change path to x-ray files location !!!!! ######
 path = "path_to_files" 
-#############################################
+######################################################
 
 cols = ["Filename","BrixiaScoreGlobal","ConsensusTestset"]
 cutoff = 8 # optimal cutoff based on literature (add citation)
@@ -298,9 +304,9 @@ for epoch in range(n_epochs):  # loop over the dataset multiple times
             print(f'[{epoch + 1}, {idx + 1:5d}] loss: {running_loss / 20:.3f}, accuracy: {np.mean(running_accuracy):3.2f}%')
             running_loss = 0.0 # reset this value, else your loss will seem to be going up every time
             running_accuracy = []
-    losses.append(running_loss_epoch)
+    losses.append(running_loss_epoch / len(trainloader))
     accuracies.append(np.mean(running_accuracy_epoch))
-    if np.mean(losses[-3:]) < 30:
+    if np.mean(losses[-3:]) < 0.20:
         print('Early stop')
         break
 
@@ -376,10 +382,6 @@ print(f'Accuracy of the network on the {total} test images: {100 * correct // to
 
 # In[16]:
 
-
-from sklearn.metrics import confusion_matrix
-import seaborn as sn
-import pandas as pd
 
 # Classes
 classes = ('High Brixia Score','Low Brixia Score')
