@@ -3,7 +3,7 @@
 
 -- a project for COMP562: Intro to Machine Learning at UNC-Chapel Hill --
 
-This project applies a deep convolutional neural network to perform a binary classification on x-ray images from COVID-19 patients based on progostic scoring (Brixia Score). The dataset is from kaggle (https://www.kaggle.com/datasets/andrewmvd/covid19-xray-severity-scoring).
+This project applies a deep convolutional neural network to perform a binary classification on x-ray images from COVID-19 patients based on progostic scoring (Brixia Score). The dataset available on Kaggle (https://www.kaggle.com/datasets/andrewmvd/covid19-xray-severity-scoring).
 
 References:
 1. Borghesi, A., & Maroldi, R. (2020). COVID-19 outbreak in Italy: Experimental chest X-ray scoring system for quantifying and monitoring disease progression. La Radiologia Medica, 125(5), 509–513. https://doi.org/10.1007/s11547-020-01200-3
