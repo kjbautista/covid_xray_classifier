@@ -1,12 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# **Image Classifier with a Convolution Neural Network (CNN)**
-# 
-# This classifier will classify a X-Ray dataset (https://www.kaggle.com/datasets/andrewmvd/covid19-xray-severity-scoring) using a deep convolutional neural network based on prognostic scoring using the BRIXIA scoring system.
-# 
-# We will use PyTorch (https://pytorch.org/) as our deep learning framework. 
-
 # In[1]:
 
 
@@ -21,15 +15,11 @@ from torchvision import transforms
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-
-import os
-
-from imutils import build_montages
 import cv2
-
-from sklearn.metrics import confusion_matrix
-import seaborn as sn
-import pandas as pd
+import os
+os.environ['KMP_DUPLICATE_LIB_OK']='True'
+from imutils import build_montages
+from sklearn.model_selection import train_test_split
 
 # Set up CUDA
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -43,7 +33,7 @@ else:
 
 
 # Add label to save files
-save_lab = '-net1'
+save_lab = '-net2'
 
 
 # 
@@ -85,12 +75,15 @@ save_lab = '-net1'
 # The segmented x-ray images will be used for ease of classification. 
 # 
 
+
+
+
 # In[3]:
 
 
-##### change path to x-ray files location !!!!! ######
-path = "path_to_files" 
-######################################################
+##### -- change to path to files !!!!! ######
+path = "/Users/jyingli/Documents/562project" 
+#############################################
 
 cols = ["Filename","BrixiaScoreGlobal","ConsensusTestset"]
 cutoff = 8 # optimal cutoff based on literature (add citation)
@@ -109,11 +102,18 @@ labels = (metadata.BrixiaScoreGlobal >= cutoff)
   # 1 = high Brixia score (>= 8)
 
 # Split into training and test sets
-train_files = file_list[(metadata.ConsensusTestset == 0)]
-train_labels = labels[metadata.ConsensusTestset == 0]
+training_files = file_list[(metadata.ConsensusTestset == 0)]
+training_labels = labels[metadata.ConsensusTestset == 0]
 test_files = file_list[metadata.ConsensusTestset == 1]
 test_labels = labels[metadata.ConsensusTestset == 1]
+
+# Distribution of score in training and validatin set are balanced
+train_files, validation_files, train_labels, validation_labels=train_test_split(training_files,
+    training_labels, test_size=0.1, random_state=66, 
+    stratify=metadata.BrixiaScoreGlobal[metadata.ConsensusTestset == 0])
+
 print(f"Number of images in the training set: {len(train_files)}")
+print(f"Number of images in the validation set: {len(validation_files)}")
 print(f"Number of images in the test set: {len(test_files)}")
 
 # Display distribution of Global Brixia Scores
@@ -154,6 +154,7 @@ class XRayDataset(Dataset):
 
 ### Create datasets ###
 train_set = XRayDataset(train_files,train_labels,transform)
+validation_set=XRayDataset(validation_files,validation_labels,transform)
 test_set = XRayDataset(test_files,test_labels,transform)
 
 
@@ -182,16 +183,22 @@ cv2.imwrite(path+'/montage.png',montage)
 batch_size = 32 # randomly-chosen - ideally, needs a hyperparameter search
 
 # Load the datasets using Pytorch DataLoader
-trainloader = torch.utils.data.DataLoader(train_set,batch_size=batch_size,shuffle=True,num_workers=4)
-testloader = torch.utils.data.DataLoader(test_set,batch_size=batch_size,shuffle=True,num_workers=4)
+trainloader = torch.utils.data.DataLoader(train_set,batch_size=batch_size,shuffle=True,num_workers=0)
+validationloader = torch.utils.data.DataLoader(validation_set,batch_size=batch_size,shuffle=True,num_workers=0)
+testloader = torch.utils.data.DataLoader(test_set,batch_size=batch_size,shuffle=True,num_workers=0)
 
 image_size = 512 # pixel dimensions of image
 
 
-# **Creating the model**
+
+
+
+
 
 # In[7]:
 
+
+# **Creating the model**
 
 # CNN architecture
 class simple_cnn(torch.nn.Module):
@@ -216,19 +223,27 @@ class simple_cnn(torch.nn.Module):
     # linear layer - applies a linear transformation
     self.fc0 = torch.nn.Linear(in_features = 288, out_features = 32)
     self.fc1 = torch.nn.Linear(in_features = 32, out_features = 2) 
+    
+    # Define proportion or neurons to dropout
+    self.dropout = torch.nn.Dropout(0.4)
+    self.dropout1 = torch.nn.Dropout(0.2)
 
   def forward(self,x):
     x = self.conv0(x)
+    x=self.dropout1(x)
     x = F.relu(x)
     x = self.pool(x)
     x = self.conv1(x)
+    x=self.dropout(x)
     x = F.relu(x)
     x = self.pool(x)
     x = self.conv2(x)
+    x=self.dropout(x)
     x = F.relu(x)
     x = self.pool(x)
     x = torch.flatten(x, 1)
     x = self.fc0(x)
+    x=self.dropout(x)
     x = F.relu(x)
     x = self.fc1(x)
     return x
@@ -251,10 +266,10 @@ out = model(sample_tensor)
 print(out.shape)
 
 
-# **Model training**
-
 # In[9]:
 
+
+# **Model training**
 
 ### Cost function ###
 # Cross Entropy Loss
@@ -265,12 +280,15 @@ loss_fn = torch.nn.CrossEntropyLoss()
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
 
 
+
 # In[10]:
 
 
-n_epochs = 100
+#use validation set to decide epoch
+n_epochs =20
 losses = []
 accuracies = []
+validation_accuracies=[]
 
 for epoch in range(n_epochs):  # loop over the dataset multiple times
     early_stop = 0
@@ -306,9 +324,35 @@ for epoch in range(n_epochs):  # loop over the dataset multiple times
             running_accuracy = []
     losses.append(running_loss_epoch / len(trainloader))
     accuracies.append(np.mean(running_accuracy_epoch))
-    if np.mean(losses[-3:]) < 0.20:
-        print('Early stop')
-        break
+    # calculate test accuracy on validation set
+    correct = 0
+    total = 0
+
+    lab_pred = []
+    lab_true = []
+    
+    
+    with torch.no_grad():
+    # iterate over validation data
+        for data in validationloader:
+            img, lab = data
+            img = img.to(device)
+            lab = lab.to(device)
+            # calculate outputs by running images through the network
+            out = model(img)
+            # the class with the highest energy is what we choose as prediction
+            pred = torch.argmax(out.data, 1)
+            total += lab.size(0)
+            correct += (pred == lab).sum().item()
+
+            lab_pred.extend(pred.tolist()) # Save predictions
+            lab_true.extend(lab.tolist()) # Save true labels
+    validation_accuracies.append(100*correct // total)
+    #print(validation_accuracies)
+    print(f'Accuracy of the network on the {total} validation images: {100 * correct // total}%')
+    # Save the model for future use
+    PATH = path+'/covid_xray_classifier'+save_lab+'epoch'+str(epoch+1)+'.pth'
+    torch.save(model.state_dict(), PATH)
 
 
 # In[11]:
@@ -322,36 +366,38 @@ plt.title('Loss')
 plt.savefig(path+'/loss'+save_lab+'.png')
 
 
+
 # In[12]:
 
 
-# Plot accuracies
+# Plot training and validation accuracies
+fig=plt.figure(figsize=(10,5))
+bx=fig.add_subplot(111)
 plt.plot(range(1,np.shape(accuracies)[0]+1),accuracies)
+l0=bx.plot(range(1,np.shape(accuracies)[0]+1),accuracies,c='blue')
+l1=bx.plot(range(1,np.shape(accuracies)[0]+1),validation_accuracies,c='orange')
 plt.xlabel('epoch')
 plt.ylabel('avg. accuracy (%)')
-plt.title('Accuracy')
+plt.title('Training Accuracy vs Validation Accuracy')
 plt.savefig(path+'/accuracy'+save_lab+'.png')
 
 
-# In[13]:
-
-
-# Save the model
-PATH = path+'/covid_xray_classifier'+save_lab+'.pth'
-torch.save(model.state_dict(), PATH)
+# In[19]:
 
 
 # **Running the model on the test set**
 
-# In[14]:
+# # Load model
+model.load_state_dict(torch.load(path+'/covid_xray_classifier'+save_lab+'epoch7'+'.pth'))
+
+
+
+
+# In[20]:
 
 
 # # Load model
 # model.load_state_dict(torch.load(PATH))
-
-
-# In[15]:
-
 
 correct = 0
 total = 0
@@ -378,19 +424,29 @@ with torch.no_grad():
 print(f'Accuracy of the network on the {total} test images: {100 * correct // total}%')
 
 
+# In[22]:
+
+
 # **Generate Confusion Matrix**
 
-# In[16]:
-
+from sklearn.metrics import confusion_matrix
+import seaborn as sn
+import pandas as pd
 
 # Classes
-classes = ('High Brixia Score','Low Brixia Score')
+classes = ('Low Brixia Score','High Brixia Score')
 
 # Build confusion matrix
 cf_matrix = confusion_matrix(lab_true, lab_pred)
-df_cm = pd.DataFrame(cf_matrix/np.sum(cf_matrix) *10, index = [i for i in classes],
+df_cm = pd.DataFrame(cf_matrix/np.sum(cf_matrix), index = [i for i in classes],
                      columns = [i for i in classes])
 plt.figure(figsize = (7,5))
-sn.heatmap(df_cm, annot=True)
+sn.heatmap(df_cm, annot=True,fmt='2.1%')
 plt.savefig(path+'/confusion_matrix'+save_lab+'.png')
+
+
+# In[ ]:
+
+
+
 
